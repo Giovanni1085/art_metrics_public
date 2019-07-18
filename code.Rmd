@@ -1,0 +1,845 @@
+---
+title: "Art Metrics"
+output: 
+  html_document:
+    theme: journal
+    highlight: default
+    css: style.css
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(cache = FALSE, echo = TRUE, message = FALSE, warning = FALSE)
+```
+
+
+
+```{r}
+library(tidyverse)
+library(lubridate)
+library(rlang)
+```
+
+### Creations
+
+```{r mint}
+
+# read data
+ERC721Transfer <- read_csv("csv/ERC721Transfer.csv")
+EventDetails <- read_csv("csv/EventDetails.csv")
+
+SuperRareCreations = ERC721Transfer %>%
+  filter(from == "0000000000000000000000000000000000000000")  %>% # mint transfers only
+  left_join(EventDetails, by = "id") %>% # join with event details to get timestamp
+  select(tokenId, artist = to, timestamp = blockTimestamp) %>% # select relevant variables
+  arrange(timestamp) # arrange by timestamp 
+
+
+```
+
+### Direct sales
+
+```{r direct_sales}
+
+# read data
+SuperRareSold <- read_csv("csv/SuperRareSold.csv")
+
+# direct sales
+SuperRareDirectSales  = 
+  SuperRareSold %>%
+  mutate(amount = amount / 10^18) %>% # express amount in ETH
+  left_join(EventDetails, by = "id") %>% # join to get timestamp
+  select(tokenId, seller, buyer, amount, timestamp = blockTimestamp) %>% # select relevant variables
+  arrange(timestamp) # arrange by timestamp 
+  
+
+```
+
+### Auction sales
+
+```{r auction_sales}
+
+# read data
+SuperRareAcceptBid <- read_csv("csv/SuperRareAcceptBid.csv")
+
+SuperRareAuctionSales  = 
+  SuperRareAcceptBid %>%
+  mutate(amount = amount / 10^18) %>% # express amount in ETH
+  rename(buyer = bidder) %>% # remname bidder as buyer
+  left_join(EventDetails, by = "id") %>% # join with event details to get timestamp
+  select(tokenId, seller, buyer, amount, timestamp = blockTimestamp) %>% # select relevant variables
+  arrange(timestamp) # arrange by timestamp 
+
+
+```
+
+### All sales (direct or auction)
+
+```{r all_sales}
+SuperRareAllSales  = 
+  SuperRareAuctionSales %>% 
+  dplyr::union(SuperRareDirectSales) %>% # union
+  arrange(timestamp) # arrange by timestamp 
+
+ggplot(SuperRareAllSales) + 
+  geom_histogram(aes(x = amount), binwidth = 0.1) + 
+  theme_classic() +
+  theme(axis.text=element_text(size=15),
+        axis.title=element_text(size=18))
+
+```
+
+### Bids
+
+```{r}
+
+SuperRareBid <- read_csv("csv/SuperRareBid.csv")
+SuperRareTokenCreator <- read_csv("csv/SuperRareTokenCreator.csv")
+
+# all bids with creator of artwork and timestamp
+SuperRareAllBids = 
+  SuperRareBid  %>%
+  left_join(SuperRareTokenCreator, by = "tokenId") %>%
+  left_join(EventDetails, by = "id") %>%
+  mutate(amount = amount / 10^18) %>% 
+  select(tokenId, bidder, artist = address, amount, timestamp = blockTimestamp)
+
+```
+
+### Which are the busy days?
+
+```{r}
+# build events (mint, sell, bid)
+
+# mint
+mintEvents = SuperRareCreations %>%
+  select(tokenId, timestamp) %>% 
+  mutate(type = "mint")
+  
+# sell
+sellEvents = SuperRareAllSales %>%
+  select(tokenId, timestamp) %>% 
+  mutate(type = "sell")
+  
+# bid
+bidEvents = SuperRareAllBids %>%
+  select(tokenId, timestamp) %>% 
+  mutate(type = "bid")
+
+
+allEvents = mintEvents %>%
+  dplyr::union(sellEvents) %>% 
+  dplyr::union(bidEvents) %>%
+  arrange(timestamp)
+
+# by type
+count(allEvents, type, sort = TRUE)
+# by date
+count(allEvents, date = date(timestamp), sort = TRUE)
+# by month
+count(allEvents, year = year(timestamp), year = year(timestamp), month = month(timestamp), sort = TRUE)
+# by week day
+count(allEvents, year = wday(timestamp, label = TRUE), sort = TRUE)
+# by week day (single events)
+count(mintEvents, year = wday(timestamp, label = TRUE), sort = TRUE)
+count(bidEvents, year = wday(timestamp, label = TRUE), sort = TRUE)
+count(sellEvents, year = wday(timestamp, label = TRUE), sort = TRUE)
+
+# by date
+daily = count(allEvents, date = date(timestamp), sort = TRUE)
+ggplot(daily, aes(date, n)) + 
+  geom_line() +  
+  geom_smooth(se = FALSE, span = 0.20) +
+  labs(title = "Events per date") +
+  theme_bw() +
+  ylab("count") +
+  theme(axis.text=element_text(size=15),
+        axis.title=element_text(size=18))
+
+dailyMint = count(mintEvents, date = date(timestamp), sort = TRUE)
+ggplot(filter(dailyMint, !(date %in% c("2018-07-17", "2018-07-16"))), aes(date, n)) + 
+  geom_line() +  
+  geom_smooth(se = FALSE, span = 0.20) +
+  labs(title = "Mint events per date") +
+  theme_bw() +
+  ylab("count") +
+  theme(axis.text=element_text(size=15),
+        axis.title=element_text(size=18))
+
+dailyBid = count(bidEvents, date = date(timestamp), sort = TRUE)
+ggplot(dailyBid, aes(date, n)) + 
+  geom_line() +  
+  geom_smooth(se = FALSE, span = 0.20) +
+  labs(title = "Bid events per date") +
+  theme_bw() +
+  ylab("count") +
+  theme(axis.text=element_text(size=15),
+        axis.title=element_text(size=18))
+
+dailySell = count(sellEvents, date = date(timestamp), sort = TRUE)
+ggplot(dailySell, aes(date, n)) + 
+  geom_line() +  
+  geom_smooth(se = FALSE, span = 0.20) +
+  labs(title = "Sell events per date") +
+  theme_bw() +
+  ylab("count") +
+  theme(axis.text=element_text(size=15),
+        axis.title=element_text(size=18))
+
+DailySales <- SuperRareAllSales %>%
+  group_by(date = date(timestamp)) %>%
+  summarise(daily_sales = sum(amount))
+ggplot(DailySales, aes(date, daily_sales)) + 
+  geom_line() +  
+  geom_smooth(se = FALSE, span = 0.20) +
+  labs(title = "Value of sales per date") +
+  theme_bw() +
+  ylab("value") +
+  theme(axis.text=element_text(size=15),
+        axis.title=element_text(size=18))
+
+```
+
+### What happened in July? 
+
+```{r}
+# count events by deate
+count(mintEvents, date = date(timestamp), sort = TRUE)
+count(bidEvents, date = date(timestamp), sort = TRUE)
+count(sellEvents, date = date(timestamp), sort = TRUE)
+
+# events in July
+mintEvents %>% 
+  filter(month(timestamp) == "7") %>% 
+  count(date(timestamp), sort = TRUE)
+
+bidEvents %>% 
+  filter(month(timestamp) == "7") %>% 
+  count(date(timestamp), sort = TRUE)
+
+sellEvents %>% 
+  filter(month(timestamp) == "7") %>% 
+  count(date(timestamp), sort = TRUE)
+
+
+# who created in those days of July?
+SuperRareUsers <- read_csv("csv/User.csv")
+SuperRareCreations %>% 
+  filter(date(timestamp) %in% c(date("2018-07-16"), date("2018-07-17"))) %>% 
+  count(artist, sort = TRUE) %>% 
+  left_join(SuperRareUsers, by = c("artist" = "ethaddress")) %>% 
+  select(artist, username, creations = n)
+
+```
+
+### Who are the most endorsed artists?
+
+```{r}
+
+# sell
+sellEndorse = SuperRareDirectSales %>%
+  select(tokenId, address = seller, timestamp) %>% 
+  left_join(SuperRareUsers, by = c("address" = "ethaddress")) %>% 
+  select(tokenId, address, username, timestamp) %>% 
+  mutate(type = "sell") %>% 
+  arrange(timestamp)
+
+  
+# bid
+bidEndorse = SuperRareAllBids %>%
+  select(tokenId, address = artist, timestamp) %>% 
+  left_join(SuperRareUsers, by = c("address" = "ethaddress")) %>% 
+  select(tokenId, address, username, timestamp) %>% 
+  mutate(type = "bid") %>%
+  arrange(timestamp)
+  
+
+allEndorse = dplyr::union(sellEndorse, bidEndorse) %>% 
+  arrange(timestamp)
+
+
+artistEndorse = 
+  allEndorse %>% 
+  group_by(username, address) %>% 
+  summarise(endorsements = n()) %>% 
+  arrange(desc(endorsements))
+
+artistBidEndorse = 
+  bidEndorse %>% 
+  group_by(username, address) %>% 
+  summarise(bids = n()) %>% 
+  arrange(desc(bids))
+
+artistSellEndorse = 
+  sellEndorse %>% 
+  group_by(username, address) %>% 
+  summarise(sales = n()) %>% 
+  arrange(desc(sales))
+
+```
+
+### What are the most liked/viewed artworks/artists?
+
+```{r}
+TokenLike <- read_csv("csv/TokenLike.csv")
+TokenView <- read_csv("csv/TokenView.csv")
+ERC721Metadata <- read_csv("csv/ERC721Metadata.csv")
+
+# add token name
+TokenLike = 
+  TokenLike %>% 
+  left_join(ERC721Metadata, by = "tokenId") %>% 
+  select(tokenId, name, address, timestamp = dateCreated, imageURI)
+
+# add token name
+TokenView = 
+  TokenView %>% 
+  left_join(ERC721Metadata, by = "tokenId") %>% 
+  select(tokenId, name, fingerprint, timestamp = dateCreated, imageURI)
+
+(countLike = count(TokenLike, tokenId, name, sort = TRUE))
+(countView = count(TokenView, tokenId, name, sort = TRUE))
+
+artistLike = countLike %>% 
+  left_join(SuperRareTokenCreator, by = "tokenId") %>% 
+  group_by(address) %>% 
+  summarise(likes = sum(n)) %>% 
+  left_join(SuperRareUsers, by = c("address" = "ethaddress")) %>% 
+  select(username, address, likes) %>% 
+  arrange(desc(likes))
+
+artistView = countView %>% 
+  left_join(SuperRareTokenCreator, by = "tokenId") %>% 
+  group_by(address) %>% 
+  summarise(views = sum(n)) %>% 
+  left_join(SuperRareUsers, by = c("address" = "ethaddress")) %>% 
+  select(username, address, views) %>% 
+  arrange(desc(views))
+
+artistLike
+artistView
+
+```
+
+### Are there clear roles among users?
+
+```{r eval=TRUE}
+
+# tibble sale users
+userHash = sort(unique(c(SuperRareAllSales$seller, SuperRareAllSales$buyer)))
+saleUsers = tibble(id = 1:length(userHash), hash = userHash)
+
+# count sellers
+countSellers = 
+  group_by(SuperRareAllSales, seller) %>%
+  summarise(sellNumber = n(), sellAmount = sum(amount)) %>%
+  arrange(desc(sellNumber))
+
+
+# count buyers
+countBuyers = 
+  group_by(SuperRareAllSales, buyer) %>%
+  summarise(buyNumber = n(), buyAmount = sum(amount)) %>%
+  arrange(desc(buyNumber))  
+
+
+# add sales and purchases to users
+saleUsers = 
+  saleUsers %>%
+  left_join(countSellers, by = c("hash" = "seller")) %>% # add sales (notice left join)
+  left_join(countBuyers, by = c("hash" = "buyer")) %>% # add purchases (notice left join)
+  mutate(sellNumber = ifelse(is.na(sellNumber), 0, sellNumber), # replace NA with 0
+         buyNumber = ifelse(is.na(buyNumber), 0, buyNumber),
+         sellAmount = ifelse(is.na(sellAmount), 0, sellAmount),
+         buyAmount = ifelse(is.na(buyAmount), 0, buyAmount)) 
+
+# correlation
+M = as.matrix(saleUsers[, c("sellNumber", "buyNumber", "sellAmount", "buyAmount")])
+round(cor(M, method = "kendall"), 2)
+
+# remove super buyers
+superBuyers = countBuyers$buyer[1:2]
+saleUsersNoOutliers = filter(saleUsers, !(hash %in% superBuyers))
+qSell = quantile(saleUsersNoOutliers$sellNumber, 0.9)  
+qBuy = quantile(saleUsersNoOutliers$buyNumber, 0.9) 
+
+ggplot(saleUsersNoOutliers) + 
+  geom_point(aes(x = sellNumber, y = buyNumber)) +
+  labs(x = "sell", y = "buy", title = "Sales versus purchases", subtitle = "Users are either sellers or buyers (with two exceptions)") +
+  scale_fill_gradient(low="black", high="red") +
+  geom_hline(aes(yintercept = qSell), size = 0.3, colour = "grey") +
+  geom_vline(aes(xintercept = qBuy), size = 0.3, colour = "grey") +
+  theme_classic() +
+  theme(axis.text=element_text(size=12),
+        axis.title=element_text(size=14))
+
+```
+
+### Who are the most central artists and collectors?
+
+To answer this query we will use Kleinberg HITS on the sale network. We first build and visualize the directed weighted network where the links are from buyer to seller (following the flow of money) and the weight of the link is the sale price.  
+
+
+```{r}
+library(tidygraph)
+library(ggraph)
+
+# build nodes
+x = sort(unique(c(SuperRareAllSales$seller, SuperRareAllSales$buyer)))
+nodes = tibble(id = 1:length(x), address = x) %>% 
+  left_join(SuperRareUsers, by = c("address" = "ethaddress")) %>% 
+  select(id, username, address)
+
+# build edges (edge direction along the flow of money: buyer --> seller)
+edges = 
+  mutate(SuperRareAllSales, 
+         from = match(SuperRareAllSales$buyer, nodes$address), 
+         to = match(SuperRareAllSales$seller, nodes$address)) %>%
+  select(from, to, buyer, seller, tokenId, amount, timestamp)
+
+# build sale network
+saleNet = tbl_graph(nodes = nodes, edges, directed = TRUE)
+
+# visualize (undirected) network
+layout_fr = create_layout(saleNet, layout = "fr")
+layout_sy = create_layout(saleNet, layout = "sugiyama")
+
+ggraph(layout_fr) +
+  geom_edge_fan(alpha = 0.1, show.legend = FALSE) +
+  theme_graph()
+
+ggraph(layout_sy) +
+  geom_edge_fan(alpha = 0.1, show.legend = FALSE) +
+  theme_graph()
+
+```
+
+We now compute some centrality measures on the sale network, namely:
+
+* **authority**: HITS authority centrality; 
+* **hub**: HITS hub centrality; 
+* **sellItems**: number of sold items;
+* **sellAmount**: overall amount of sold items
+* **buyItems**: number of bought items;
+* **buyAmount**: overall amount of bought items
+
+```{r}
+# compute all other ratings and add them to the nodes of the graph
+saleNet = saleNet %>% 
+  activate(nodes) %>%
+  mutate(authority = centrality_authority(weights = amount), # HITS authority
+         sellAmount = centrality_degree(weights = amount, mode = "in"), # overall amount of sold items
+         sellItems = centrality_degree(mode = "in"), # number of sold items
+         hub = centrality_hub(weights = amount), # HITS hub
+         buyAmount = centrality_degree(weights = amount, mode = "out"), # overall amount of bought items
+         buyItems = centrality_degree(mode = "out") # number of bought items
+  )
+
+networkCentrality = as.list(saleNet)$nodes
+M = cor(select(networkCentrality, -id, -username, -address), method = "kendall")
+knitr::kable(round(M, 2))
+corrplot(M, order = "AOE")
+
+```
+
+Finally we list the top-10 artists and collectors using HITS centrality and check if there are top artists that are also top collectors:
+
+```{r}
+
+networkCentrality = as.list(saleNet)$nodes
+networkCentrality %>% 
+  select(username, authority, sellAmount, sellItems) %>% 
+  arrange(desc(authority)) 
+
+networkCentrality %>% 
+  select(username, hub, buyAmount, buyItems) %>% 
+  arrange(desc(hub)) 
+
+n = 10
+topArtists = networkCentrality %>% 
+  arrange(desc(authority)) %>% 
+  select(username) %>% 
+  head(n)
+
+topCollectors = networkCentrality %>% 
+  arrange(desc(hub)) %>% 
+  select(username) %>% 
+  head(n)
+
+dplyr::intersect(topArtists, topCollectors)
+```
+
+### Who are the top artists and collectors?
+
+We first program a funtion that computes all-time top actors using a timed version of the HITS method. We also adapt it to discover hot (short-time top) actors.
+
+```{r}
+# TopHot - Identify top and hot actors
+
+# INPUT
+# endorsements: data frame with timestamped endorsements. Columns are: from, to, price, timestamp
+# eps: hotness deflation value for unit of time (days)
+
+# OUTPUT
+# hotx: artist hotness vector
+# hoty: collector hotness vector
+# x: artist rating vector
+# y: collector rating vector
+
+TopHot = function(endorsements, eps = 1) {
+  
+  # number of artists
+  n = max(c(endorsements$from, endorsements$to))
+  
+  # number of events
+  m = nrow(endorsements)
+  
+  # artist rating vector
+  x = rep(0, n)
+  # collector rating vector
+  y = rep(0, n)
+  
+  # artist hotness vector
+  hotx = rep(0, n)
+  # collector hotness vector
+  hoty = rep(0, n)
+  
+  # reward vectors
+  rew = rep(0, m)
+  rewx = rep(0, m)
+  rewy = rep(0, m)
+  
+  # artist reward vector
+  xw = rep(0, m)
+  # collector reward vector
+  yw = rep(0, m)
+
+
+  # percentile function
+  ecdf_fun <- function(x, perc) ecdf(x)(perc)
+  
+  # iterate through events
+  for (i in 1:m) {
+    
+    # 1. get seller, buyer and price
+    seller = endorsements[i, "to"]
+    buyer = endorsements[i, "from"]
+    price = endorsements[i, "amount"]
+
+    # 2. compute price reward
+    if (i == 1) {
+      rew[i] = 0.5
+    } else {
+      rew[i] = ecdf_fun(endorsements[1:(i-1),]$amount, price)
+    }
+    
+    # 3. compute rating rewards for seller and buyer
+    # only sellers with one sale
+    v = x[x > 0]
+    if (length(v) == 0) {
+      rewx[i] = 0.5
+    } else {
+      rewx[i] = ecdf_fun(v, x[seller])
+    }
+
+    # only buyers with one purchase
+    v = y[y > 0]
+    if (length(v) == 0) {
+      rewy[i] = 0.5
+    }
+    else {
+      rewy[i] = ecdf_fun(v, y[buyer])
+    }
+    
+    
+    # 4. compute artist reward using price reward and collector rating reward
+    xw[i] = rew[i] * rewy[i]
+
+    # 5. compute collector reward using price reward and artist reward
+    yw[i] = rew[i] * rewx[i]
+
+
+    # 6. update seller artist and buyer collector ratings with respective rewards
+    x[seller] = x[seller] + xw[i] 
+    y[buyer] = y[buyer] + yw[i]
+    
+    # 7. update hotness for artist and collector
+    hotx[seller] = hotx[seller] + xw[i]
+    hoty[buyer] = hoty[buyer] + yw[i]
+    
+    # 9. deflate all values of hotness proportionally to elapsed time
+    if (i > 1) {
+      # current time in seconds
+      t2 = as.double(endorsements[i, "timestamp"])
+      # previous time in seconds
+      t1 = as.double(endorsements[i-1, "timestamp"])
+      # elapsed time since last event in days 
+      timediff = (t2 - t1)  / (60 * 60 * 24)
+      # decrease hotness
+      hotx = hotx - eps * timediff
+      hoty = hoty - eps * timediff
+      # force hotness to be non-negative
+      hotx[hotx < 0] = 0
+      hoty[hoty < 0] = 0
+    }
+  }
+  
+  return(list(x = x, y = y, hotx = hotx, hoty = hoty))
+}
+
+```
+
+
+```{r}
+library(corrplot)
+library(DT)
+
+endorsements = 
+  as.list(saleNet)$edges %>% 
+  select(from, to, amount, timestamp)
+
+l = TopHot(as.data.frame(endorsements), eps = 0.15)
+
+# add ratings to network
+saleNet = saleNet %>% 
+  activate(nodes) %>%
+  mutate(hotArtist = l$hotx, hotCollector = l$hoty, topArtist = l$x, topCollector = l$y) 
+
+networkCentrality = as.list(saleNet)$nodes %>% 
+  select(username, topArtist, authority, sellAmount, sellItems, topCollector, hub, buyAmount, buyItems) %>% 
+  rename(artist = topArtist, collector = topCollector, sellA = sellAmount, buyA = buyAmount, sellN = sellItems, buyN = buyItems)
+
+dt = 
+  cbind(networkCentrality[,1], round(networkCentrality[, 2:ncol(networkCentrality)], 2)) %>% 
+  arrange(-artist)
+
+datatable(dt, options = list(pageLength = 10))
+
+M = cor(select(networkCentrality, -username), method = "kendall")
+knitr::kable(round(M, 2))
+corrplot.mixed(M, lower="number", upper="ellipse", order = "AOE")
+
+ggplot(filter(networkCentrality, artist > 0), aes(x = artist, y = authority)) +
+  geom_point() +
+  geom_smooth() +
+  theme_bw()
+
+ggplot(filter(networkCentrality, artist > 0), aes(x = artist, y = sellN)) +
+  geom_point() +
+  geom_smooth() +
+  theme_bw()
+
+ggplot(filter(networkCentrality, artist > 0), aes(x = artist, y = sellA)) +
+  geom_point() +
+  geom_smooth() +
+  theme_bw()
+
+ggplot(filter(networkCentrality, collector > 0, collector < 50), aes(x = collector, y = hub)) +
+  geom_point() +
+  geom_smooth() +
+  theme_bw()
+
+ggplot(filter(networkCentrality, collector > 0, collector < 50), aes(x = collector, y = buyN)) +
+  geom_point() +
+  geom_smooth() +
+  theme_bw()
+
+ggplot(filter(networkCentrality, collector > 0, collector < 50), aes(x = collector, y = buyA)) +
+  geom_point() +
+  geom_smooth() +
+  theme_bw()
+
+```
+
+```{r eval=FALSE, echo=FALSE}
+art = 
+  networkCentrality %>% 
+  select(username, artist, sellN) %>% 
+  mutate(rank_artist = row_number(desc(artist)), rank_sellN = row_number(desc(sellN))) %>% 
+  arrange(-artist)
+
+col = 
+  networkCentrality %>% 
+  select(username, collector, buyN) %>% 
+  mutate(rank_collector = row_number(desc(collector)), rank_buyN = row_number(desc(buyN))) %>% 
+  arrange(-collector)
+
+
+knitr::kable(head(art, 10), digits = 2, format = "latex")
+knitr::kable(head(col, 10), digits = 2, format = "latex")
+
+```
+
+### What is the prediction accuracy of a rating method for artists?
+
+Given a rating method for artists, we evaluate its prediction accuracy as follows:
+
+* compute the rating for artists at time $t$
+* retrieve the ratings of top-k artists at time $t$ (this is our investment)
+* compute the sale increase for the top-k artists moving from time $t$ to time $t+1$ (this is our gain)
+* repeat the process for different times and take the mean gain
+* evaluate the rating using the mean gain
+
+```{r eval=TRUE}
+
+screenshot = function(sales, t, eps = 0.15) {
+  
+  # retrieve sales up to time t
+  sales = filter(sales, timestamp < t)
+  
+  # build nodes
+  x = sort(unique(c(sales$seller, sales$buyer)))
+  nodes = tibble(id = 1:length(x), address = x) %>% 
+    left_join(SuperRareUsers, by = c("address" = "ethaddress")) %>% 
+    select(id, username, address)
+  
+  # build edges (edge direction along the flow of money: buyer --> seller)
+  edges = 
+    mutate(sales, 
+           from = match(sales$buyer, nodes$address), 
+           to = match(sales$seller, nodes$address)) %>%
+    select(from, to, buyer, seller, tokenId, amount, timestamp)
+  
+  # build sale network
+  saleGraph = tbl_graph(nodes = nodes, edges, directed = TRUE)
+  
+  # compute all other ratings and add them to the nodes of the graph
+  saleGraph = saleGraph %>% 
+    activate(nodes) %>%
+    mutate(authority = centrality_authority(weights = amount), # HITS authority
+           sellAmount = centrality_degree(weights = amount, mode = "in"), # overall amount of sold items
+           sellItems = centrality_degree(mode = "in"), # number of sold items
+           hub = centrality_hub(weights = amount), # HITS hub
+           buyAmount = centrality_degree(weights = amount, mode = "out"), # overall amount of bought items
+           buyItems = centrality_degree(mode = "out") # number of bought items
+    )
+  
+  
+  # compute topness and hotness
+  endorsements = 
+    as.list(saleGraph)$edges %>% 
+    select(from, to, amount, timestamp)
+  
+  l = TopHot(as.data.frame(endorsements), eps)
+  
+  
+  # add metrics to the sale network
+  saleGraph = saleGraph %>% 
+    activate(nodes) %>%
+    mutate(hotArtist = l$hotx, hotCollector = l$hoty, topArtist = l$x, topCollector = l$y) 
+  
+  # retrieve data frame with all metrics
+  centrality = as.list(saleGraph)$nodes %>% 
+    select(username, address, 
+           topArtist, hotArtist, authority, sellAmount, sellItems, 
+           topCollector, hotCollector, hub, buyAmount, buyItems) %>% 
+    rename(artist = topArtist, collector = topCollector, sellA = sellAmount, buyA = buyAmount, sellN = sellItems, buyN = buyItems)
+  
+  return(centrality)
+}
+
+screencast = function(sales, rating, t1, t2, k = 10, eps = 0.15) {
+  
+  # compute the rating for artists at time $t$
+  shot1 = screenshot(sales, t1, eps)
+  
+  # retrieve the ratings of top-k artists at time $t$ (this is our investment)
+  top = shot1 %>% 
+    arrange(desc(!!sym(rating))) %>% 
+    head(k)
+  
+  # compute the sale increase for the top-k artists moving from time $t$ to time $t+1$ (this is our gain)
+  shot2 = screenshot(sales, t2, eps)
+
+  df1 = top %>% 
+    select(username:sellN) %>% 
+    rename(sellA1 = sellA)
+  
+  df2 = shot2 %>% 
+    select(username, address, sellA) %>% 
+    rename(sellA2 = sellA)
+  
+  df3 = left_join(df1, df2, by = "address") %>% 
+    mutate(gain = sellA2 - sellA1)
+  
+  # evaluate the rating using the mean gain
+  if (rating == "sellA") rating = "sellA1"
+  x = as.vector(select(df3, !!sym(rating)))
+  x = x / sum(x)
+  y = df3$gain
+  gain = sum(x * y)
+
+  return(gain)
+  
+}
+
+```
+
+### Bootstrap confidence intervals for prediction accuracy
+
+```{r eval=FALSE}
+superCollectors = filter(SuperRareUsers, username %in% c("VK_Crypto", "sebdcl"))$ethaddress
+SuperRareAlmostAllSales = filter(SuperRareAllSales, !(seller %in% superCollectors), !(buyer %in% superCollectors))
+
+df_in_use <- SuperRareAllSales # SuperRareAlmostAllSales
+
+boots = 1:25 # with 1000 it takes a while!
+times = 1:8
+days = 30
+gain1 = matrix(nrow = length(times), ncol = length(boots))
+gain2 = matrix(nrow = length(times), ncol = length(boots))
+rating1 = "artist"
+rating2 = "authority"
+start = date("2018-08-01")
+k = 10
+eps = 0.15
+
+for(y in boots) {
+  sampled_df <- df_in_use[sample(nrow(df_in_use), replace = TRUE),]
+  t1 = start
+  for(i in times) {
+    t2 = t1 + days
+    gain1[i,y] = screencast(sampled_df, rating1, t1, t2, k, eps)
+    gain2[i,y] = screencast(sampled_df, rating2, t1, t2, k, eps)
+    t1 = t2
+  }
+}
+
+#gain1
+mean(gain1, na.rm = TRUE)
+#gain2
+mean(gain2, na.rm = TRUE)
+
+# confidence intervals
+sd1 <- apply(gain1, 1, sd, na.rm = TRUE)
+sd2 <- apply(gain2, 1, sd, na.rm = TRUE)
+error1 <- qt(0.975,df=length(boots)-1)*sd1/sqrt(length(boots))
+error2 <- qt(0.975,df=length(boots)-1)*sd2/sqrt(length(boots))
+
+# create df for plotting
+t = rep(start, length(times))
+s = seq(from = 0, by = days, length.out = length(times))
+t = t + s
+df_1 = tibble(t, rowMeans(gain1, na.rm = TRUE), rowMeans(gain1, na.rm = TRUE)-error1, rowMeans(gain1, na.rm = TRUE)+error1)
+df_1 = add_column(df_1, rating=rating1)
+names(df_1) <- c("time", "gain", "lower", "upper", "rating")
+df_2 = tibble(t, rowMeans(gain2, na.rm = TRUE), rowMeans(gain2, na.rm = TRUE)-error2, rowMeans(gain2, na.rm = TRUE)+error2)
+df_2 = add_column(df_2, rating=rating2)
+names(df_2) <- c("time", "gain", "lower", "upper", "rating")
+df <- rbind(df_1,df_2)
+
+# plot
+p <- ggplot(df, aes(x=time, y=gain, colour=rating)) +
+  geom_point() + geom_line() +
+  labs(x = "time", y = "gain") +
+  #labs(title = "Full dataset") +
+  theme_bw() +
+  theme(axis.text=element_text(size=12),
+        axis.title=element_text(size=15),
+        legend.text=element_text(size=12),
+        legend.title=element_text(size=15))
+p <- p+geom_ribbon(aes(ymin=df$lower, ymax=df$upper), linetype=2, alpha=0.1)
+p
+
+```
