@@ -1,5 +1,7 @@
 # Art Metrics
 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.3344713.svg)](https://doi.org/10.5281/zenodo.3344713)
+
 This repository contains code and data to replicate the results of the paper *Art Metrics*: https://arxiv.org/abs/1907.07758.
 
 ### Contents
